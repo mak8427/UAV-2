@@ -161,6 +161,7 @@ def read_orthophoto_bands(each_ortho, precision):
     try:
         with rio.open(each_ortho) as rst:
             num_bands = rst.count
+            print(num_bands)
             b_all = rst.read()  # possibly uint16 or float
             if b_all.dtype == np.float64:
                 b_all = b_all.astype(np.float32)
