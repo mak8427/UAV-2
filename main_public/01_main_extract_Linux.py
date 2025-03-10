@@ -18,8 +18,9 @@ import traceback
 from pathlib import Path
 import rasterio
 from rasterio.warp import reproject, Resampling, calculate_default_transform
-import json
-import subprocess
+import geopandas as gpd
+from shapely.geometry import Polygon
+from shapely.geometry import Point
 import subprocess
 import re
 import json
@@ -161,12 +162,12 @@ def read_orthophoto_bands(each_ortho, precision):
     try:
         with rio.open(each_ortho) as rst:
             num_bands = rst.count
-            print(num_bands)
             b_all = rst.read()  # possibly uint16 or float
             if b_all.dtype == np.float64:
                 b_all = b_all.astype(np.float32)
 
             rows, cols = np.indices((rst.height, rst.width))
+            rows_flat, cols_flat = rows.flatten(), cols.flatten()
             rows_flat, cols_flat = rows.flatten(), cols.flatten()
             Xw, Yw = rio.transform.xy(rst.transform, rows_flat, cols_flat, offset='center')
 
@@ -446,22 +447,42 @@ def process_orthophoto(each_ortho, df_dem, cam_path, path_flat, out, source, ite
         # Paths
         dem_path = source['dem_path']
 
-        # Co-registration Check
         # Before proceeding, ensure DEM and orthophoto are aligned
         if not check_alignment(dem_path, each_ortho):
             # Not aligned, co-register orthophoto to DEM
             coreg_path = os.path.join(out, f"coreg_{file}")
-            # Optionally, define a target resolution (e.g., (10,10)) if you want to change pixel size
             target_resolution = None  # or (10, 10)
             each_ortho = coregister_and_resample(each_ortho, dem_path, coreg_path, target_resolution=target_resolution, resampling=Resampling.bilinear)
-
             # Verify alignment again after co-registration
             if not check_alignment(dem_path, each_ortho):
                 raise ValueError("Co-registration failed: orthophoto and DEM are still not aligned.")
 
         # Get camera position
         xcam, ycam, zcam = get_camera_position(cam_path, name)
-        print(xcam, ycam, zcam)
+
+
+        #Convert it to the Polygon system
+        easting, northing = latlon_to_utm32n_series(ycam, xcam )
+        point = Point(easting, northing)
+        print(point)
+
+
+
+        # Load the GPKG file
+        file_path = source["Polygon_path"]
+        gdf = gpd.read_file(file_path)
+        inside = False
+
+        for polygon in gdf["geometry"]:
+            if(point.within(polygon)):
+                logging.info(f"The Image is inside the polygon: {polygon}")
+                print(f"The Image is inside the polygon: {polygon}")
+                inside = True
+        if(inside == False):
+            logging.error(f"The Image is not inside any polygon")
+
+
+
 
         # Get solar angles
         sunelev, saa = extract_sun_angles(name, path_flat, exiftool_path)
@@ -535,7 +556,8 @@ def main():
             'ori': config.main_extract_ori,
             'name': config.main_extract_name,
             'path_list_tag': config.main_extract_path_list_tag,
-            "precision": config.precision
+            "precision": config.precision,
+            "Polygon_path": config.main_polygon_path
         }
     ]
 
