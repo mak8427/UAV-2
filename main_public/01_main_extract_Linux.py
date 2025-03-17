@@ -435,6 +435,7 @@ import polars as pl
 def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", precision=2):
     # Read the polygon file
     gdf_poly = gpd.read_file(polygon_path)
+    points_before = len(df)
 
     # *** IMPORTANT: Correct the CRS if needed ***
     # If the coordinate values suggest a projected system (e.g., UTM) but the file is tagged as EPSG:4326,
@@ -466,15 +467,13 @@ def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", precision=2)
 
     # Create shapely Points for each row
     df_pd["geometry"] = df_pd.apply(lambda row: Point(row["Xw"], row["Yw"]), axis=1)
-
     # Filter rows where the point is within the union polygon
     gdf_points = gpd.GeoDataFrame(df_pd, geometry="geometry", crs=target_crs)
     gdf_filtered = gdf_points[gdf_points["geometry"].within(union_poly)].copy()
+    points_after = len(df_pd)
 
-    # Round coordinates
-    gdf_filtered["Xw"] = gdf_filtered["Xw"].round(precision)
-    gdf_filtered["Yw"] = gdf_filtered["Yw"].round(precision)
 
+    logging.info("Points filtered:" + str(points_after - points_before))
     # Drop the geometry column and convert back to Polars DataFrame
     gdf_filtered = gdf_filtered.drop(columns=["geometry"])
     return pl.from_pandas(gdf_filtered)
