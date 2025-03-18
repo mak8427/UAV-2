@@ -22,9 +22,11 @@ from joblib import Parallel, delayed
 from shapely.geometry.base import BaseGeometry
 from tqdm import tqdm
 import math
-
 from smac_functions import *  # Your helper functions, e.g., xyval, latlon_to_utm32n_series, etc.
 from config_object import config
+import geopandas as gpd
+from shapely.geometry import Point
+import polars as pl
 
 
 def configure_logging():
@@ -162,12 +164,6 @@ def merge_data(df_dem, df_allbands, precision):
 # ------------------------------
 # Calculate Viewing Angles
 # ------------------------------
-import geopandas as gpd
-from shapely.geometry import Point
-
-import geopandas as gpd
-from shapely.geometry import Point
-import polars as pl
 
 
 
@@ -421,15 +417,6 @@ def get_camera_position(cam_path, name):
     except Exception as e:
         logging.error(f"Error retrieving camera position for {name}: {e}")
         raise
-
-
-import geopandas as gpd
-from shapely.geometry import Point
-import polars as pl
-
-import geopandas as gpd
-from shapely.geometry import Point
-import polars as pl
 
 
 def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", precision=2):
