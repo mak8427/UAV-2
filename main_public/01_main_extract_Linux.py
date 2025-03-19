@@ -8,7 +8,7 @@ import logging
 import rasterio as rio
 import numpy as np
 from timeit import default_timer as timer
-import exiftool
+#import exiftool
 from pathlib import PureWindowsPath, Path
 import traceback
 import re
@@ -94,6 +94,7 @@ def read_orthophoto_bands(each_ortho, precision, transform_to_utm=True, target_c
         with rio.open(each_ortho) as rst:
             num_bands = rst.count
             b_all = rst.read()  # Read all bands
+            print(max(b_all[0][0]))
             if b_all.dtype == np.float64:
                 b_all = b_all.astype(np.float32)
             rows, cols = np.indices((rst.height, rst.width))
@@ -113,12 +114,14 @@ def read_orthophoto_bands(each_ortho, precision, transform_to_utm=True, target_c
                 Yw = np.array(Yw, dtype=np.float32).round(precision)
 
             band_values = b_all.reshape(num_bands, -1).T
+
+
             data = {
                 'Xw': pl.Series(Xw, dtype=pl.Float32),
                 'Yw': pl.Series(Yw, dtype=pl.Float32)
             }
             for idx in range(num_bands):
-                data[f'band{idx + 1}'] = pl.Series(band_values[:, idx], dtype=pl.UInt16)
+                data[f'band{idx + 1}'] = pl.Series(band_values[:, idx], dtype=pl.Float32)
             df_allbands = pl.DataFrame(data)
             df_allbands = df_allbands.with_columns([
                 pl.col("Xw").round(precision),
@@ -340,6 +343,7 @@ def save_parquet(df, out, source, iteration, file):
     start_write = timer()
     try:
         output_path = Path(out) / f"{source['name']}_{iteration}_{file}.parquet"
+        print(output_path)
         df.write_parquet(str(output_path), compression='zstd', compression_level=2)
         end_write = timer()
         logging.info(f"Saved image result for {file} in {end_write - start_write:.2f} seconds")
@@ -511,9 +515,9 @@ def process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, 
         required_columns = ["Xw", "Yw", "band1", "band2", "band3"]
         if not all(col in df_merged.columns for col in required_columns):
             raise ValueError(f"Missing required columns in df_merged: {required_columns}")
-
-        polygon_path = source["Polygon_path"]  # path to your polygon file
-        df_merged = filter_df_by_polygon(df_merged, polygon_path, target_crs="EPSG:32632", precision=2)
+        if polygon_filtering:
+         polygon_path = source["Polygon_path"]  # path to your polygon file
+         df_merged = filter_df_by_polygon(df_merged, polygon_path, target_crs="EPSG:32632", precision=2)
 
         # Retrieve solar angles from EXIF data
         sunelev, saa = extract_sun_angles(name, path_flat, exiftool_path)
@@ -570,7 +574,7 @@ def build_database(tuple_chunk, source, exiftool_path):
     path_flat = retrieve_orthophoto_paths(ori)
     for each_ortho in tqdm(images, desc=f"Processing iteration {iteration}"):
         process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, exiftool_path, precision,
-                           polygon_filtering=True)
+                           polygon_filtering=False)
     end_DEM_i = timer()
     logging.info(f"Total time for iteration {iteration}: {end_DEM_i - start_DEM_i:.2f} seconds")
 
