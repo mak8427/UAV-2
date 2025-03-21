@@ -77,6 +77,9 @@ def read_dem(dem_path, precision, transform_to_utm=True, target_crs="EPSG:32632"
             pl.col("Yw").round(precision)
         ]).unique()
 
+
+
+
         end = timer()
         logging.info(f"DEM read and processed in {end - start:.2f} seconds")
         return df_dem
@@ -198,10 +201,25 @@ def calculate_angles(df_merged, xcam, ycam, zcam, sunelev, saa):
         df_merged = df_merged.with_columns([
             ((pl.col("vaa_temp") + 360) % 360).alias("vaa")
         ])
+
+        # Compute the lower and upper bounds for the central 90%
+        p05 = df_merged.select(pl.col("elev").quantile(0.02)).item()
+        p95 = df_merged.select(pl.col("elev").quantile(0.98)).item()
+
+        # Use these bounds to mask out values outside the central 90%
         df_merged = df_merged.with_columns([
             pl.when(pl.col("band1") == 65535).then(None).otherwise(pl.col("vza")).alias("vza"),
-            pl.when(pl.col("band1") == 65535).then(None).otherwise(pl.col("vaa")).alias("vaa")
+            pl.when(pl.col("band1") == 65535).then(None).otherwise(pl.col("vaa")).alias("vaa"),
+            pl.when((pl.col("elev") < p05) | (pl.col("elev") > p95))
+            .then(None)
+            .otherwise(pl.col("elev"))
+            .alias("elev")
         ])
+
+
+
+
+
         df_merged = df_merged.with_columns([
             pl.lit(xcam, dtype=pl.Float32).alias("xcam"),
             pl.lit(ycam, dtype=pl.Float32).alias("ycam"),
