@@ -16,13 +16,13 @@ from tqdm import tqdm
 
 from Main.functions.date_time_functions import convert_to_timezone
 from Main.functions.raster_functions import *  # Your helper functions, e.g., xyval, latlon_to_utm32n_series, etc.
-from config_object import config
+from config_object import config_object
 import geopandas as gpd
 from shapely.geometry import Point
 import polars as pl
 import pysolar as solar
 
-def configure_logging():
+def config_objecture_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -607,7 +607,9 @@ def build_database(tuple_chunk, source, exiftool_path):
 
 
 def main():
-    configure_logging()
+    config_objecture_logging()
+    config = config_object("config_file.yaml")
+
     sources = [
         {
             'out': config.main_extract_out,
@@ -616,10 +618,10 @@ def main():
             'ori': config.main_extract_ori,
             'name': config.main_extract_name,
             'path_list_tag': config.main_extract_path_list_tag,
-            "precision": config.precision,
-            "Polygon_path": config.main_polygon_path,
-            "start date": config.start_date,
-            "time zone": config.time_zone,
+            'precision': config.precision,
+            'Polygon_path': config.main_polygon_path,
+            'start date': config.start_date,
+            'time zone': config.time_zone,
         }
     ]
     exiftool_path = r"exiftool"
