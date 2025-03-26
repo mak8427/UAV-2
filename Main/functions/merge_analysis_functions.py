@@ -1,14 +1,43 @@
 import polars as pl
 import logging
-
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import gaussian_kde
 from timeit import default_timer as timer
 
 
-def visualize_coordinate_alignment(df_dem, df_allbands, precision):
-    """Visualize how well the coordinates align between datasets"""
+def visualize_coordinate_alignment(df_dem, df_allbands, precision, folder_name="coordinate_alignments"):
+    """Visualize how well the coordinates align between datasets
+
+    Args:
+        df_dem: DEM DataFrame
+        df_allbands: Orthophoto bands DataFrame
+        precision: Coordinate precision
+        folder_name: Name of the folder to save figures in (default: "coordinate_alignments")
+
+    Returns:
+        Dictionary with overlap statistics
+    """
+    import os
+    import re
     import matplotlib.pyplot as plt
-    import numpy as np
-    from scipy.stats import gaussian_kde
+
+    # Create the folder if it doesn't exist
+    os.makedirs(folder_name, exist_ok=True)
+
+    # Get the next available index by checking existing files
+    existing_files = os.listdir(folder_name) if os.path.exists(folder_name) else []
+    indices = []
+
+    # Extract indices from existing filenames
+    pattern = re.compile(r'coordinate_alignment_(\d+)\.png$')
+    for file in existing_files:
+        match = pattern.match(file)
+        if match:
+            indices.append(int(match.group(1)))
+
+    # Determine next index (0 if no files exist, otherwise max+1)
+    next_index = 0 if not indices else max(indices) + 1
 
     # Round coordinates for analysis
     df_dem = df_dem.with_columns([
@@ -52,9 +81,12 @@ def visualize_coordinate_alignment(df_dem, df_allbands, precision):
     plt.title('Coordinate Alignment Between DEM and Band Data')
     plt.xlabel('X Coordinate')
     plt.ylabel('Y Coordinate')
-    plt.savefig('coordinate_alignment.png', dpi=300)
 
-    logging.info(f"Coordinate alignment analysis:")
+    # Save the figure with auto-incremented index in the designated folder
+    filename = os.path.join(folder_name, f'coordinate_alignment_{next_index}.png')
+    plt.savefig(filename, dpi=200)
+
+    logging.info(f"Coordinate alignment analysis saved to {filename} (index: {next_index})")
     logging.info(f"  - DEM points: {len(dem_coords):,}")
     logging.info(f"  - Band points: {len(bands_coords):,}")
     logging.info(f"  - Overlapping points: {len(common_coords):,}")
@@ -65,9 +97,9 @@ def visualize_coordinate_alignment(df_dem, df_allbands, precision):
         "band_points": len(bands_coords),
         "common_points": len(common_coords),
         "dem_overlap_pct": overlap_dem,
-        "bands_overlap_pct": overlap_bands
+        "bands_overlap_pct": overlap_bands,
+        "saved_index": next_index
     }
-
 
 def analyze_kdtree_matching(df_dem, df_allbands, precision, max_distance=1.0):
     """Analyze potential matches using K-d tree nearest neighbor search"""
