@@ -482,7 +482,7 @@ def get_camera_position(cam_path, name):
         raise
 
 
-def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", precision=2):
+def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", shrinkage=0.1):
     # Read the polygon file
     gdf_poly = gpd.read_file(polygon_path)
     points_before = len(df)
@@ -503,12 +503,33 @@ def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", precision=2)
     if valid_gdf.crs != target_crs:
         valid_gdf = valid_gdf.to_crs(target_crs)
 
+    # Shrink each polygon by applying a negative buffer - the buffer is proportional to polygon size
+    if shrinkage > 0:
+        # Calculate area-based buffer distances for each polygon
+        valid_gdf['area'] = valid_gdf.geometry.area
+        valid_gdf['buffer_distance'] = -1 * valid_gdf['area'].apply(lambda x: np.sqrt(x) * shrinkage)
+
+        # Apply the calculated buffer to each polygon
+        valid_gdf['geometry'] = valid_gdf.apply(
+            lambda row: row.geometry.buffer(row.buffer_distance) if not row.geometry.is_empty else row.geometry,
+            axis=1
+        )
+
+        # Remove any polygons that might have become empty after shrinking
+        valid_gdf = valid_gdf[~valid_gdf.geometry.is_empty]
+
+        if valid_gdf.empty:
+            logging.warning(f"All polygons became empty after applying shrinkage factor of {shrinkage}")
+            return df.filter(pl.lit(False))  # Return empty dataframe with same schema
+
     # Union all valid polygons into one geometry
-    # Use union_all() if available, else unary_union:
     try:
-        union_poly = valid_gdf.union_all()  # Newer API
+        union_poly = valid_gdf.geometry.unary_union  # This works with both newer and older versions
     except AttributeError:
-        union_poly = valid_gdf.unary_union
+        try:
+            union_poly = valid_gdf.union_all()  # Newer API
+        except AttributeError:
+            union_poly = valid_gdf.unary_union  # Older API
 
     print("Union polygon bounds:", union_poly.bounds)
 
@@ -517,12 +538,16 @@ def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", precision=2)
 
     # Create shapely Points for each row
     df_pd["geometry"] = df_pd.apply(lambda row: Point(row["Xw"], row["Yw"]), axis=1)
+
     # Filter rows where the point is within the union polygon
     gdf_points = gpd.GeoDataFrame(df_pd, geometry="geometry", crs=target_crs)
     gdf_filtered = gdf_points[gdf_points["geometry"].within(union_poly)].copy()
-    points_after = len(df_pd)
 
-    logging.info("Points filtered:" + str(points_after - points_before))
+    points_after = len(gdf_filtered)
+    points_filtered = points_before - points_after
+
+    logging.info(f"Points filtered: {points_filtered} ({points_filtered / points_before * 100:.2f}%)")
+
     # Drop the geometry column and convert back to Polars DataFrame
     gdf_filtered = gdf_filtered.drop(columns=["geometry"])
     return pl.from_pandas(gdf_filtered)
@@ -593,23 +618,7 @@ def process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, 
         # Filter merged DataFrame by polygon
         # After merging, filter rows outside the polygon:
 
-        # For debugging: convert to pandas and plot distributions
-        import matplotlib.pyplot as plt
-        df_pd = df_merged.to_pandas()
-        print(df_pd.describe())
-        plt.figure(figsize=(8, 6))
-        plt.hist(df_pd['elev'], bins=50, color='skyblue', edgecolor='black')
-        plt.xlabel('Elevation')
-        plt.ylabel('Frequency')
-        plt.title('Elevation Distribution')
-        plt.show()
-        for band in [col for col in df_pd.columns if col.startswith('band')]:
-            plt.figure(figsize=(8, 6))
-            plt.hist(df_pd[band], bins=50, alpha=0.7, edgecolor='black')
-            plt.xlabel(f'{band} Values')
-            plt.ylabel('Frequency')
-            plt.title(f'Distribution of {band}')
-            plt.show()
+        plotting_raster(df_merged)
 
         # Save merged data as parquet
         save_parquet(df_merged, out, source, iteration, file)
