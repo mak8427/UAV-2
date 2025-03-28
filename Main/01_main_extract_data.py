@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from Main.functions.date_time_functions import convert_to_timezone
 from Main.functions.merge_analysis_functions import visualize_coordinate_alignment, analyze_kdtree_matching
+from Main.functions.polygon_filtering_functions import is_pos_inside_polygon, filter_df_by_polygon
 from Main.functions.raster_functions import *  # Your helper functions, e.g., xyval, latlon_to_utm32n_series, etc.
 from config_object import config_object
 import geopandas as gpd
@@ -482,82 +483,13 @@ def get_camera_position(cam_path, name):
         raise
 
 
-def filter_df_by_polygon(df, polygon_path, target_crs="EPSG:32632", shrinkage=0.1):
-    # Read the polygon file
-    gdf_poly = gpd.read_file(polygon_path)
-    points_before = len(df)
-
-    # *** IMPORTANT: Correct the CRS if needed ***
-    # If the coordinate values suggest a projected system (e.g., UTM) but the file is tagged as EPSG:4326,
-    # reassign the correct CRS:
-    if gdf_poly.crs.to_string() == "EPSG:4326":
-        # For example, if you know they should be UTM Zone 32N:
-        gdf_poly.crs = "EPSG:32632"
-
-    # Filter valid, non-empty geometries
-    valid_gdf = gdf_poly[gdf_poly.is_valid & (~gdf_poly.is_empty)]
-    if valid_gdf.empty:
-        raise ValueError("No valid polygons found in the file.")
-
-    # Convert to target CRS if needed
-    if valid_gdf.crs != target_crs:
-        valid_gdf = valid_gdf.to_crs(target_crs)
-
-    # Shrink each polygon by applying a negative buffer - the buffer is proportional to polygon size
-    if shrinkage > 0:
-        # Calculate area-based buffer distances for each polygon
-        valid_gdf['area'] = valid_gdf.geometry.area
-        valid_gdf['buffer_distance'] = -1 * valid_gdf['area'].apply(lambda x: np.sqrt(x) * shrinkage)
-
-        # Apply the calculated buffer to each polygon
-        valid_gdf['geometry'] = valid_gdf.apply(
-            lambda row: row.geometry.buffer(row.buffer_distance) if not row.geometry.is_empty else row.geometry,
-            axis=1
-        )
-
-        # Remove any polygons that might have become empty after shrinking
-        valid_gdf = valid_gdf[~valid_gdf.geometry.is_empty]
-
-        if valid_gdf.empty:
-            logging.warning(f"All polygons became empty after applying shrinkage factor of {shrinkage}")
-            return df.filter(pl.lit(False))  # Return empty dataframe with same schema
-
-    # Union all valid polygons into one geometry
-    try:
-        union_poly = valid_gdf.geometry.unary_union  # This works with both newer and older versions
-    except AttributeError:
-        try:
-            union_poly = valid_gdf.union_all()  # Newer API
-        except AttributeError:
-            union_poly = valid_gdf.unary_union  # Older API
-
-    print("Union polygon bounds:", union_poly.bounds)
-
-    # Convert the Polars DataFrame to Pandas
-    df_pd = df.to_pandas()
-
-    # Create shapely Points for each row
-    df_pd["geometry"] = df_pd.apply(lambda row: Point(row["Xw"], row["Yw"]), axis=1)
-
-    # Filter rows where the point is within the union polygon
-    gdf_points = gpd.GeoDataFrame(df_pd, geometry="geometry", crs=target_crs)
-    gdf_filtered = gdf_points[gdf_points["geometry"].within(union_poly)].copy()
-
-    points_after = len(gdf_filtered)
-    points_filtered = points_before - points_after
-
-    logging.info(f"Points filtered: {points_filtered} ({points_filtered / points_before * 100:.2f}%)")
-
-    # Drop the geometry column and convert back to Polars DataFrame
-    gdf_filtered = gdf_filtered.drop(columns=["geometry"])
-    return pl.from_pandas(gdf_filtered)
 
 
 # ------------------------------
 # Core Processing Function for an Orthophoto
 # ------------------------------
 def process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, exiftool_path, precision,
-                       polygon_filtering=False, alignment=False):
+                       polygon_filtering=False,polygon_filtering_cam_pos= True ,alignment=False):
     try:
         start_ortho = timer()
         path, file = os.path.split(each_ortho)
@@ -570,12 +502,8 @@ def process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, 
         print(f"longitude: {lon}, latitude: {lat}, zcam: {zcam}")
 
         # Optional: Check if the image is within a polygon
-        if polygon_filtering:
-            easting, northing = latlon_to_utm32n_series(lat, lon)
-            point = Point(easting, northing)
-            gdf = gpd.read_file(source["Polygon_path"])
-            inside = any(point.within(polygon) for polygon in gdf["geometry"])
-            logging.info(f"Point inside Polygon: {str(inside)}")
+        if polygon_filtering_cam_pos:
+            inside = is_pos_inside_polygon(lat, lon, source)
             if not inside:
                 raise ValueError(f"The Image {file} is not inside any polygon")
 
@@ -605,7 +533,7 @@ def process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, 
 
         if polygon_filtering:
             polygon_path = source["Polygon_path"]  # path to your polygon file
-            df_merged = filter_df_by_polygon(df_merged, polygon_path, target_crs="EPSG:32632", precision=2)
+            df_merged = filter_df_by_polygon(df_merged, polygon_path, target_crs="EPSG:32632")
 
         # Retrieve solar angles from position and time
         sunelev, saa = extract_sun_angles(name, lon, lat, source["start date"], source["time zone"])
@@ -646,7 +574,7 @@ def build_database(tuple_chunk, source, exiftool_path):
     path_flat = retrieve_orthophoto_paths(ori)
     for each_ortho in tqdm(images, desc=f"Processing iteration {iteration}"):
         process_orthophoto(each_ortho, cam_path, path_flat, out, source, iteration, exiftool_path, precision,
-                           polygon_filtering=False)
+                           polygon_filtering=True)
     end_DEM_i = timer()
     logging.info(f"Total time for iteration {iteration}: {end_DEM_i - start_DEM_i:.2f} seconds")
 
